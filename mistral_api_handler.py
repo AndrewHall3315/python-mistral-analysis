@@ -54,12 +54,12 @@ class MistralAPIHandler:
             ]
         }
 
-    def run_command(self, prompt: str, max_tokens: int = 2000, temperature: float = 0.1, model: str = "mistral-medium-latest") -> str:
+    def run_command(self, prompt: str, max_tokens: int = 2000, temperature: float = 0.1, model: str = "ft:open-mistral-7b:7b9e9b5e:20250714:65877b47") -> str:
         """
         Execute a command through the Mistral API with improved formatting.
 
-        UPDATED: Changed default model from mistral-large-latest to mistral-medium-latest
-        due to Mistral's model deprecation (effective June 16th, 2025).
+        UPDATED: Using fine-tuned Mistral 7B model specifically trained for Peter Hall archive analysis.
+        Model: ft:open-mistral-7b:7b9e9b5e:20250714:65877b47
         """
         # Add formatting instructions to the prompt
         formatted_prompt = f"""
