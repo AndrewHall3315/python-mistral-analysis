@@ -523,11 +523,10 @@ class UrbanPlanningAnalysis:
                 'content_date': "Error in content extraction"
             }
 
-    @staticmethod
-    def _generate_initial_analysis(content: str, content_analysis: Dict[str, Any]) -> str:
+    def _generate_initial_analysis(self, content: str, content_analysis: Dict[str, Any]) -> str:
         """Generate initial analysis focusing on document content."""
         logger.info("Generating initial analysis")
-        
+
         prompt = f"""
         Analyze this urban planning document to provide a high-level overview in the following format:
 
@@ -570,12 +569,11 @@ class UrbanPlanningAnalysis:
         - Word Count: {content_analysis.get('word_count', 0)}
         """
 
-        result = mistral_api.run_command(prompt, max_tokens=400)
+        result = self.mistral_api.run_command(prompt, max_tokens=400)
         logger.info("Initial analysis completed")
         return result
 
-    @staticmethod
-    def _generate_detailed_analysis(content: str, content_analysis: Dict[str, Any], initial_analysis: str) -> str:
+    def _generate_detailed_analysis(self, content: str, content_analysis: Dict[str, Any], initial_analysis: str) -> str:
         """Generate detailed analysis based on document content."""
         logger.info("Generating detailed analysis")
         
@@ -659,12 +657,11 @@ class UrbanPlanningAnalysis:
         7. Focus on patterns and principles rather than just listing examples
         """
 
-        result = mistral_api.run_command(prompt, max_tokens=1000)
+        result = self.mistral_api.run_command(prompt, max_tokens=1000)
         logger.info("Detailed analysis completed")
         return result
 
-    @staticmethod
-    def _determine_document_type(detailed_analysis: str) -> str:
+    def _determine_document_type(self, detailed_analysis: str) -> str:
         """Determine document type and classification."""
         logger.info("Determining document type")
         
@@ -702,12 +699,11 @@ class UrbanPlanningAnalysis:
         Use exact spacing and underlines as shown above.
         """
 
-        result = mistral_api.run_command(prompt, max_tokens=400)
+        result = self.mistral_api.run_command(prompt, max_tokens=400)
         logger.info("Document type determination completed")
         return result
 
-    @staticmethod
-    def _generate_catalogue_entry(content: str, detailed_analysis: str, classification: str, metadata: Dict[str, Any], content_extracted: Dict[str, Any]) -> str:
+    def _generate_catalogue_entry(self, content: str, detailed_analysis: str, classification: str, metadata: Dict[str, Any], content_extracted: Dict[str, Any]) -> str:
         """Generate enhanced catalogue entry with metadata."""
         logger.info("Generating detailed catalogue entry")
         logger.info(f"Creating catalogue entry with content_extracted: {content_extracted}")
@@ -767,7 +763,7 @@ class UrbanPlanningAnalysis:
         Access Restrictions: [Any specific handling requirements, or "Standard handling" if None]
         """
         
-        confidentiality_result = mistral_api.run_command(confidentiality_prompt, max_tokens=200)
+        confidentiality_result = self.mistral_api.run_command(confidentiality_prompt, max_tokens=200)
         
         # Extract metadata with fallbacks
         author = metadata.get('Author', metadata.get('author', 'Unknown'))
@@ -874,7 +870,7 @@ class UrbanPlanningAnalysis:
         6. You MUST preserve exact dates and prefixes in Content-Derived Date
         """
 
-        result = mistral_api.run_command(prompt, max_tokens=800)
+        result = self.mistral_api.run_command(prompt, max_tokens=800)
         logger.info(f"Catalogue entry generated: {result[:100]}...")
         return result
 
@@ -1156,8 +1152,7 @@ class UrbanPlanningAnalysis:
         logger.info("Comparative analysis extraction completed")
         return result
 
-    @staticmethod
-    def _fallback_analysis(content: str) -> str:
+    def _fallback_analysis(self, content: str) -> str:
         """Perform basic keyword-based analysis when API fails."""
         logger.info("Performing fallback analysis")
         content = content.lower()
@@ -1185,8 +1180,7 @@ class UrbanPlanningAnalysis:
         response.append("\nNote: This is a basic keyword-based analysis due to API unavailability.")
         return '\n'.join(response)
 
-    @staticmethod
-    def _clean_text_for_analysis(text: str) -> str:
+    def _clean_text_for_analysis(self, text: str) -> str:
         """Clean and prepare text for analysis."""
         # Remove excessive whitespace
         text = ' '.join(text.split())
