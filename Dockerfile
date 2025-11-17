@@ -10,6 +10,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY mistral_api_handler.py .
 COPY urban_planning_analysis.py .
 COPY document_processor.py .
+COPY vector_graph_processor.py .
+COPY enhanced_document_processor.py .
 COPY app.py .
 
 # Expose port (Railway will set PORT env var)

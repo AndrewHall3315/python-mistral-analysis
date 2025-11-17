@@ -8,6 +8,7 @@ import os
 import sys
 from mistral_api_handler import MistralAPIHandler
 from document_processor import DocumentProcessor
+from enhanced_document_processor import EnhancedDocumentProcessor
 
 app = Flask(__name__)
 
@@ -18,6 +19,7 @@ if not mistral_api_key:
 
 mistral_api = MistralAPIHandler(api_key=mistral_api_key)
 document_processor = DocumentProcessor(mistral_api=mistral_api)
+enhanced_document_processor = EnhancedDocumentProcessor(mistral_api=mistral_api, mistral_api_key=mistral_api_key)
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -120,6 +122,110 @@ def analyze_document():
     except Exception as e:
         # Log error
         print(f"[ERROR] Analysis failed: {str(e)}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+
+        # Return error response
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+@app.route('/analyze-complete', methods=['POST'])
+def analyze_document_complete():
+    """
+    Complete document analysis including vector embeddings and graph data.
+
+    Request JSON:
+    {
+        "text": "Document content here...",
+        "metadata": {
+            "file_name": "document.pdf",
+            "file_type": "pdf",
+            "word_count": 5000
+        }
+    }
+
+    Response JSON:
+    {
+        "success": true,
+        "analysis": {
+            // Standard 11 analysis fields
+            "content_title": "...",
+            "content_authors": "...",
+            "initial_analysis": "...",
+            "detailed_analysis": "...",
+            "classification": "...",
+            "catalogue_entry": "...",
+            "final_analysis": "...",
+            "writing_style_analysis": "...",
+            "analytical_frameworks": "...",
+            "qa_pairs": "...",
+            "comparative_analyses": "...",
+            "is_hall_document": 0,
+
+            // NEW: Vector and graph fields
+            "embedding_vector_pg": [...],  // 1536-dimensional vector
+            "embedding_metadata": {...},
+            "entities": {...},
+            "relationships": [...],
+            "graph_metadata": {...}
+        }
+    }
+    """
+    try:
+        # Get JSON data from request
+        data = request.get_json()
+
+        # Validate request
+        if not data:
+            return jsonify({
+                "success": False,
+                "error": "No JSON data provided"
+            }), 400
+
+        if 'text' not in data:
+            return jsonify({
+                "success": False,
+                "error": "No text provided in request body"
+            }), 400
+
+        text = data['text']
+        metadata = data.get('metadata', {})
+
+        # Validate text is not empty
+        if not text or len(text.strip()) == 0:
+            return jsonify({
+                "success": False,
+                "error": "Text content is empty"
+            }), 400
+
+        # Log request info
+        print(f"[ANALYZE-COMPLETE] Processing document: {metadata.get('file_name', 'unknown')}")
+        print(f"[ANALYZE-COMPLETE] Text length: {len(text)} chars")
+
+        # Process document using EnhancedDocumentProcessor
+        result = enhanced_document_processor.process_document_complete(
+            content=text,
+            metadata=metadata
+        )
+
+        # Log success
+        print(f"[ANALYZE-COMPLETE] Analysis complete for {metadata.get('file_name', 'unknown')}")
+        print(f"[ANALYZE-COMPLETE] Title: {result.get('content_title', 'N/A')}")
+        print(f"[ANALYZE-COMPLETE] Entities: {sum(len(v) for v in result.get('entities', {}).values())} total")
+        print(f"[ANALYZE-COMPLETE] Relationships: {len(result.get('relationships', []))} total")
+
+        # Return successful response
+        return jsonify({
+            "success": True,
+            "analysis": result
+        }), 200
+
+    except Exception as e:
+        # Log error
+        print(f"[ERROR] Complete analysis failed: {str(e)}", file=sys.stderr)
         import traceback
         traceback.print_exc()
 

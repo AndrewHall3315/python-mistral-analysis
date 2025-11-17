@@ -38,7 +38,7 @@ class DocumentProcessor:
             metadata: Dict with file_name, file_type, word_count, etc.
 
         Returns:
-            Dict with all 11 analysis fields:
+            Dict with all 7 analysis fields:
             - content_title
             - content_authors
             - initial_analysis
@@ -46,10 +46,6 @@ class DocumentProcessor:
             - classification
             - catalogue_entry
             - final_analysis
-            - writing_style_analysis
-            - analytical_frameworks
-            - qa_pairs
-            - comparative_analyses
             - is_hall_document
         """
         logger.info(f"[DocumentProcessor] Processing: {metadata.get('file_name', 'unknown')}")
@@ -60,9 +56,11 @@ class DocumentProcessor:
             'File name': metadata.get('file_name', 'Unknown'),
             'File type': metadata.get('file_type', 'Unknown'),
             'word_count': metadata.get('word_count', len(content.split())),
-            'possible_authors': [],
+            'possible_authors': metadata.get('possible_authors', []),
             'possible_dates': [],
-            'Author': metadata.get('author', 'Unknown'),
+            'Author': metadata.get('Author', metadata.get('author', 'Unknown')),
+            'Creation Date': metadata.get('Creation Date', 'Unknown'),
+            'created': metadata.get('created'),
             'Title': metadata.get('title', metadata.get('file_name', 'Unknown'))
         }
 
@@ -81,10 +79,6 @@ class DocumentProcessor:
                     'classification': '',
                     'catalogue_entry': '',
                     'final_analysis': analysis_result.get('error', 'Analysis failed'),
-                    'writing_style_analysis': '',
-                    'analytical_frameworks': '',
-                    'qa_pairs': '',
-                    'comparative_analyses': '',
                     'is_hall_document': 0
                 }
 
@@ -101,7 +95,7 @@ class DocumentProcessor:
 
             logger.info(f"[DocumentProcessor] Final analysis generated")
 
-            # Return all 11 fields
+            # Return all 7 fields
             return {
                 'content_title': analysis_result.get('content_title', ''),
                 'content_authors': analysis_result.get('content_authors', ''),
@@ -110,10 +104,6 @@ class DocumentProcessor:
                 'classification': analysis_result.get('classification', ''),
                 'catalogue_entry': analysis_result.get('catalogue_entry', ''),
                 'final_analysis': final_analysis,
-                'writing_style_analysis': analysis_result.get('writing_style_analysis', ''),
-                'analytical_frameworks': analysis_result.get('analytical_frameworks', ''),
-                'qa_pairs': analysis_result.get('qa_pairs', ''),
-                'comparative_analyses': analysis_result.get('comparative_analyses', ''),
                 'is_hall_document': analysis_result.get('is_hall_document', 0)
             }
 
@@ -130,10 +120,6 @@ class DocumentProcessor:
                 'classification': '',
                 'catalogue_entry': '',
                 'final_analysis': f"Document processing failed: {str(e)}",
-                'writing_style_analysis': '',
-                'analytical_frameworks': '',
-                'qa_pairs': '',
-                'comparative_analyses': '',
                 'is_hall_document': 0
             }
 
