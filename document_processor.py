@@ -84,18 +84,9 @@ class DocumentProcessor:
 
             logger.info(f"[DocumentProcessor] Urban analysis complete")
             logger.info(f"[DocumentProcessor] Title: {analysis_result.get('content_title', 'N/A')}")
+            logger.info(f"[DocumentProcessor] Final analysis included from urban_analyzer")
 
-            # Generate final analysis
-            final_analysis = self._generate_final_analysis(
-                content,
-                analysis_result.get('detailed_analysis', ''),
-                analysis_result.get('classification', ''),
-                content_analysis
-            )
-
-            logger.info(f"[DocumentProcessor] Final analysis generated")
-
-            # Return all 7 fields
+            # Return all 8 fields (final_analysis now comes from urban_analyzer)
             return {
                 'content_title': analysis_result.get('content_title', ''),
                 'content_authors': analysis_result.get('content_authors', ''),
@@ -103,7 +94,7 @@ class DocumentProcessor:
                 'detailed_analysis': analysis_result.get('detailed_analysis', ''),
                 'classification': analysis_result.get('classification', ''),
                 'catalogue_entry': analysis_result.get('catalogue_entry', ''),
-                'final_analysis': final_analysis,
+                'final_analysis': analysis_result.get('final_analysis', ''),
                 'is_hall_document': analysis_result.get('is_hall_document', 0)
             }
 
@@ -122,63 +113,3 @@ class DocumentProcessor:
                 'final_analysis': f"Document processing failed: {str(e)}",
                 'is_hall_document': 0
             }
-
-    def _generate_final_analysis(
-        self,
-        content: str,
-        detailed_analysis: str,
-        classification: str,
-        metadata: Dict[str, Any]
-    ) -> str:
-        """
-        Generate final comprehensive analysis
-
-        Args:
-            content: Document text
-            detailed_analysis: Detailed analysis from urban_planning_analysis
-            classification: Classification from urban_planning_analysis
-            metadata: Document metadata
-
-        Returns:
-            Final analysis text
-        """
-        logger.info(f"[DocumentProcessor] Generating final analysis...")
-
-        # Build final analysis prompt
-        prompt = f"""Based on the document content and previous analysis, provide a comprehensive final analysis.
-
-DOCUMENT METADATA:
-- File: {metadata.get('File name', 'Unknown')}
-- Type: {metadata.get('File type', 'Unknown')}
-
-CLASSIFICATION:
-{classification}
-
-DETAILED ANALYSIS:
-{detailed_analysis}
-
-DOCUMENT CONTENT (first 2000 chars):
-{content[:2000]}
-
-Please provide a final synthesis that:
-1. Summarizes the key findings
-2. Places the document in broader context
-3. Identifies significance for urban planning/transport
-4. Notes any unique contributions or perspectives
-
-Final Analysis:"""
-
-        try:
-            # Call Mistral API for final analysis
-            final_analysis = self.mistral_api.run_command(
-                prompt=prompt,
-                max_tokens=800,
-                temperature=0.3
-            )
-
-            logger.info(f"[DocumentProcessor] Final analysis complete ({len(final_analysis)} chars)")
-            return final_analysis
-
-        except Exception as e:
-            logger.error(f"[DocumentProcessor] ERROR generating final analysis: {e}")
-            return f"Error generating final analysis: {str(e)}"

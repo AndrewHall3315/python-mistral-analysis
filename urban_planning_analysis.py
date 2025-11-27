@@ -432,16 +432,25 @@ class UrbanPlanningAnalysis:
 
             logger.info(f"Final is_hall_document value: {is_hall_document}")
 
+            # Generate final analysis (synthesis and interpretation)
+            final_analysis = self._generate_final_analysis(
+                content=content,
+                detailed_analysis=detailed_analysis,
+                classification=classification,
+                catalogue_entry=catalogue_entry
+            )
+
             final_result = {
                 'initial_analysis': initial_analysis,
                 'detailed_analysis': detailed_analysis,
                 'classification': classification,
                 'catalogue_entry': catalogue_entry,
+                'final_analysis': final_analysis,
                 'content_title': content_extracted['content_title'],
                 'content_authors': content_extracted['content_authors'],
                 'is_hall_document': is_hall_document
             }
-            
+
             logger.info("Document analysis completed successfully")
             return final_result
                 
@@ -470,7 +479,7 @@ class UrbanPlanningAnalysis:
         CONTENT_DATE: [Date in YYYY-MM-DD format]
 
         Text to analyze:
-        {content[:2000]}
+        {content[:8000]}
         """
         
         try:
@@ -543,8 +552,8 @@ class UrbanPlanningAnalysis:
 
         Base your analysis only on:
 
-        Document Content (first 2000 characters):
-        {content[:2000]}
+        Document Content:
+        {content[:8000]}
 
         Content Analysis Results:
         - Possible Authors: {', '.join(content_analysis.get('possible_authors', ['Unknown']))}
@@ -628,7 +637,7 @@ class UrbanPlanningAnalysis:
         Governance: [Only if governance structure is clearly stated]
 
         Use this document content for analysis:
-        {content[:3000]}
+        {content[:8000]}
 
         Important formatting and content rules:
         1. Only include information explicitly stated in the document
@@ -695,7 +704,7 @@ class UrbanPlanningAnalysis:
         confidentiality_prompt = f"""
         Analyze this document to determine its confidentiality level. Consider all aspects:
 
-        Document Content Preview: {content[:2000]}
+        Document Content Preview: {content[:8000]}
         Detailed Analysis: {detailed_analysis}
         Classification: {classification}
 
@@ -884,6 +893,107 @@ class UrbanPlanningAnalysis:
 
         response.append("\nNote: This is a basic keyword-based analysis due to API unavailability.")
         return '\n'.join(response)
+
+    def _generate_final_analysis(self, content: str, detailed_analysis: str, classification: str, catalogue_entry: str) -> str:
+        """
+        Generate final comprehensive analysis with synthesis and interpretation.
+
+        This analysis provides:
+        - Summary of Key Findings
+        - Broader Context
+        - Significance for Urban Planning and Transport
+        - Unique Contributions
+
+        Args:
+            content: Full document content (up to 8000 chars after cleaning)
+            detailed_analysis: The detailed analysis output
+            classification: The classification output
+            catalogue_entry: The catalogue entry output
+
+        Returns:
+            Final analysis text in structured format
+        """
+        logger.info("Generating final analysis")
+
+        prompt = f"""Based on the document content and previous analyses, provide a comprehensive final analysis.
+
+DOCUMENT CONTENT:
+{content}
+
+DETAILED ANALYSIS:
+{detailed_analysis}
+
+CLASSIFICATION:
+{classification}
+
+CATALOGUE ENTRY:
+{catalogue_entry}
+
+Please provide a final synthesis following this EXACT format:
+
+Final Analysis:
+===========
+
+Summary of Key Findings:
+----------------
+[Provide a comprehensive summary of the document's key findings. Include:
+- The main purpose and scope of the document
+- Key data points, statistics, or projections mentioned
+- Major constraints, challenges, or opportunities identified
+- Proposed solutions or recommendations
+- Important stakeholders or entities involved
+Write this as a cohesive paragraph followed by bullet points highlighting the most important findings.]
+
+Broader Context:
+--------------
+[Place the document in its broader historical, political, and professional context. Consider:
+- What era or period does this document emerge from?
+- What larger trends or movements does it relate to?
+- How does it fit into broader urban planning/transport developments?
+- What tensions or challenges of the time does it reflect?
+Write as 1-2 paragraphs explaining the document's place in broader context.]
+
+Significance for Urban Planning and Transport:
+----------------------------------
+[Analyze the document's significance for both disciplines separately:
+
+Urban Planning:
+- [Key insight or methodology for urban planning]
+- [Another planning-relevant point]
+- [Additional planning significance]
+
+Transport Planning:
+- [Key insight or methodology for transport]
+- [Another transport-relevant point]
+- [Additional transport significance]
+
+Be specific about what practitioners or researchers can learn from this document.]
+
+Unique Contributions:
+-------------------
+[Identify what makes this document distinctive or valuable. Consider:
+- Novel methodologies or frameworks introduced
+- Innovative solutions or approaches proposed
+- Rare data or projections provided
+- Unique perspective or analysis offered
+- Historical significance or precedent-setting aspects
+Write as a paragraph with bullet points for each unique contribution.]
+
+Important instructions:
+1. Base your analysis on ALL the provided content and previous analyses
+2. Be specific and substantive - avoid generic statements
+3. Use the exact formatting shown above with headers and dashes
+4. Provide concrete examples from the document where possible
+5. The analysis should demonstrate deep understanding of urban planning and transport concepts
+"""
+
+        try:
+            result = self.mistral_api.run_command(prompt, max_tokens=1500, temperature=0.3)
+            logger.info(f"Final analysis generated: {len(result)} chars")
+            return result
+        except Exception as e:
+            logger.error(f"Error generating final analysis: {e}")
+            return f"Error generating final analysis: {str(e)}"
 
     def _clean_text_for_analysis(self, text: str) -> str:
         """Clean and prepare text for analysis."""
