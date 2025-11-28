@@ -166,7 +166,7 @@ def analyze_document_complete():
             "is_hall_document": 0,
 
             // NEW: Vector and graph fields
-            "embedding_vector_pg": [...],  // 1536-dimensional vector
+            "embedding_vector_pg": [...],  // 1024-dimensional vector (Mistral native)
             "embedding_metadata": {...},
             "entities": {...},
             "relationships": [...],

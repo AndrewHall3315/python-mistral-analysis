@@ -39,29 +39,25 @@ class VectorGraphProcessor:
         Create metadata about the embedding vector.
 
         Args:
-            embedding_vector: The 1536-dimensional embedding (padded from Mistral's 1024)
+            embedding_vector: The 1024-dimensional embedding from Mistral
 
         Returns:
             dict: Metadata in format:
             {
                 "model": "mistral-embed",
-                "dimensions": 1536,
-                "original_dimensions": 1024,
+                "dimensions": 1024,
                 "created_at": "2025-01-13T10:30:00Z",
-                "api_version": "v1",
-                "padded": true
+                "api_version": "v1"
             }
         """
         logger.info("Creating embedding metadata")
 
         try:
-            actual_dims = len(embedding_vector) if embedding_vector else 1536
+            actual_dims = len(embedding_vector) if embedding_vector else 1024
 
             metadata = {
                 "model": "mistral-embed",
                 "dimensions": actual_dims,
-                "original_dimensions": 1024,  # Mistral embed returns 1024
-                "padded": True if actual_dims == 1536 else False,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "api_version": "v1"
             }
@@ -73,9 +69,7 @@ class VectorGraphProcessor:
             logger.error(f"Error creating embedding metadata: {e}")
             return {
                 "model": "mistral-embed",
-                "dimensions": 1536,
-                "original_dimensions": 1024,
-                "padded": True,
+                "dimensions": 1024,
                 "created_at": datetime.now(timezone.utc).isoformat(),
                 "api_version": "v1",
                 "error": str(e)

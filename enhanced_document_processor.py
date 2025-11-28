@@ -73,7 +73,7 @@ class EnhancedDocumentProcessor(DocumentProcessor):
                 "is_hall_document": 0,
 
                 # NEW: Vector and graph fields (5)
-                "embedding_vector_pg": [...],  # 1536-dimensional vector
+                "embedding_vector_pg": [...],  # 1024-dimensional vector (Mistral native)
                 "embedding_metadata": {...},
                 "entities": {...},
                 "relationships": [...],
@@ -177,9 +177,9 @@ class EnhancedDocumentProcessor(DocumentProcessor):
 
         embedding_text = '\n'.join(parts)
 
-        # Truncate if too long (Mistral embed has limits)
-        if len(embedding_text) > 8000:
-            embedding_text = embedding_text[:8000]
+        # Truncate if too long (Mistral embed has ~8K token limit, roughly 32K chars)
+        if len(embedding_text) > 25000:
+            embedding_text = embedding_text[:25000]
 
         logger.info(f"Prepared embedding text: {len(embedding_text)} chars")
         return embedding_text
@@ -192,10 +192,10 @@ class EnhancedDocumentProcessor(DocumentProcessor):
             text: Text to embed
 
         Returns:
-            list: 1536-dimensional embedding vector (padded from 1024 if needed)
+            list: 1024-dimensional embedding vector (Mistral's native output)
 
         Note: This uses the Mistral embeddings endpoint, NOT the chat endpoint
-        Note: Mistral returns 1024 dims, but we pad to 1536 for consistency with documents table
+        Note: Mistral embed model returns 1024 dimensions natively
         """
         logger.info(f"Generating Mistral embedding for {len(text)} chars of text...")
 
@@ -227,30 +227,23 @@ class EnhancedDocumentProcessor(DocumentProcessor):
             if response.status_code == 200:
                 result = response.json()
                 embedding = result['data'][0]['embedding']
-
-                # Pad from 1024 to 1536 dimensions (for consistency with documents table)
-                if len(embedding) == 1024:
-                    embedding = embedding + [0.0] * (1536 - 1024)
-                    logger.info(f"✅ Generated embedding: padded 1024 → 1536 dimensions")
-                else:
-                    logger.info(f"✅ Generated embedding: {len(embedding)} dimensions")
-
+                logger.info(f"✅ Generated embedding: {len(embedding)} dimensions")
                 return embedding
             else:
                 logger.error(f"Mistral embeddings API error: {response.status_code}")
                 logger.error(f"Response: {response.text}")
-                # Return zero vector as fallback
-                return [0.0] * 1536
+                # Return zero vector as fallback (1024 dimensions)
+                return [0.0] * 1024
 
         except requests.exceptions.Timeout:
             logger.error("Mistral embeddings API timeout")
-            return [0.0] * 1536
+            return [0.0] * 1024
 
         except Exception as e:
             logger.error(f"Error generating embedding: {e}")
             import traceback
             traceback.print_exc()
-            return [0.0] * 1536
+            return [0.0] * 1024
 
 
 # Standalone function for use in existing code
