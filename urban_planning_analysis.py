@@ -464,26 +464,53 @@ class UrbanPlanningAnalysis:
         
     def _extract_content_authors_and_title(self, content: str) -> Dict[str, Any]:
         prompt = f"""
-        Analyze the first page to identify:
-        1. Document title
-        2. Authors/contributors
-        3. Dates: Convert to YYYY-MM-DD format
-        - For month/year only: use 01 for day (e.g. "November 2010" -> "2010-11-01")
-        - For year only: use 01-01 (e.g. "2010" -> "2010-01-01")
-        - For month ranges, use first month (e.g. "April/May 2013" -> "2013-04-01")
-        - Preserve full dates if available (e.g. "15 June 2012" -> "2012-06-15")
+        Extract document metadata from this text. Search THOROUGHLY through the entire content.
 
-        Return IN THIS EXACT FORMAT:
-        CONTENT_TITLE: [Raw title]
-        CONTENT_AUTHORS: [Authors]
-        CONTENT_DATE: [Date in YYYY-MM-DD format]
+        1. TITLE: Look for the main document title, usually at the start or on a title page.
+
+        2. AUTHORS: Search for author names in these common locations and patterns:
+           - Title page or cover page
+           - "By [name]", "Written by [name]", "Author: [name]"
+           - "Prepared by [name]", "Prepared for [client] by [name]"
+           - "Report by [name]", "Paper by [name]"
+           - Headers or footers with author names
+           - "Contributors:", "Authors:", "Written by:"
+           - Academic citations: "[Name] et al."
+           - Company attributions: "Arup", "AECOM", "[Company Name] Team"
+           - Government authors: "Department of...", "Ministry of..."
+           - If multiple authors, list ALL of them separated by commas
+           - Include organizational authors (companies, departments, institutions)
+
+        3. DATE: Look for document dates in these patterns:
+           - Publication date, revision date, draft date
+           - "Dated:", "Date:", "Published:", "Revised:", "Version date:"
+           - Copyright notices: "© 2010", "Copyright 2010"
+           - Footer dates, header dates
+           - "Draft - [date]", "Final - [date]"
+           - Conference/presentation dates
+           - Convert to YYYY-MM-DD format:
+             * "November 2010" -> "2010-11-01"
+             * "2010" -> "2010-01-01"
+             * "April/May 2013" -> "2013-04-01"
+             * "15 June 2012" -> "2012-06-15"
+           - If multiple dates found, use the PRIMARY document date (not revision dates)
+
+        IMPORTANT:
+        - If you find partial information, include it (e.g., just a year for date)
+        - For authors, prefer specific person names over generic "staff" or "team"
+        - If no clear author but organization is mentioned, use the organization name
+
+        Return ONLY in this EXACT format (one line each, no extra text):
+        CONTENT_TITLE: [title or "Not found"]
+        CONTENT_AUTHORS: [authors separated by commas, or "Not found"]
+        CONTENT_DATE: [YYYY-MM-DD or "Not found"]
 
         Text to analyze:
-        {content[:8000]}
+        {content[:40000]}
         """
-        
+
         try:
-            result = self.mistral_api.run_command(prompt, max_tokens=300)
+            result = self.mistral_api.run_command(prompt, max_tokens=500)
             logger.info(f"Mistral raw response: {result}")
             
             content_title = "Not found in document content"
@@ -553,7 +580,7 @@ class UrbanPlanningAnalysis:
         Base your analysis only on:
 
         Document Content:
-        {content[:8000]}
+        {content[:30000]}
 
         Content Analysis Results:
         - Possible Authors: {', '.join(content_analysis.get('possible_authors', ['Unknown']))}
@@ -637,7 +664,7 @@ class UrbanPlanningAnalysis:
         Governance: [Only if governance structure is clearly stated]
 
         Use this document content for analysis:
-        {content[:8000]}
+        {content[:30000]}
 
         Important formatting and content rules:
         1. Only include information explicitly stated in the document
@@ -704,7 +731,7 @@ class UrbanPlanningAnalysis:
         confidentiality_prompt = f"""
         Analyze this document to determine its confidentiality level. Consider all aspects:
 
-        Document Content Preview: {content[:8000]}
+        Document Content Preview: {content[:30000]}
         Detailed Analysis: {detailed_analysis}
         Classification: {classification}
 
@@ -905,7 +932,7 @@ class UrbanPlanningAnalysis:
         - Unique Contributions
 
         Args:
-            content: Full document content (up to 8000 chars after cleaning)
+            content: Full document content (up to 30000 chars after cleaning)
             detailed_analysis: The detailed analysis output
             classification: The classification output
             catalogue_entry: The catalogue entry output
@@ -1001,8 +1028,8 @@ Important instructions:
         text = ' '.join(text.split())
         
         # Truncate if too long while preserving context
-        if len(text) > 8000:
-            text = text[:4000] + "\n...[content truncated]...\n" + text[-4000:]
+        if len(text) > 30000:
+            text = text[:15000] + "\n...[content truncated]...\n" + text[-15000:]
             
         return text
 
