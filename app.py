@@ -6,11 +6,25 @@ Wraps the Python Mistral analysis code for deployment on Railway
 from flask import Flask, request, jsonify
 import os
 import sys
+import threading
 from mistral_api_handler import MistralAPIHandler
 from document_processor import DocumentProcessor
 from enhanced_document_processor import EnhancedDocumentProcessor
 
 app = Flask(__name__)
+
+# Initialize Supabase client for async write-back
+supabase_url = os.environ.get('SUPABASE_URL')
+supabase_service_key = os.environ.get('SUPABASE_SERVICE_ROLE_KEY')
+supabase_client = None
+
+if supabase_url and supabase_service_key:
+    try:
+        from supabase import create_client
+        supabase_client = create_client(supabase_url, supabase_service_key)
+        print(f"[Supabase] Connected to {supabase_url}")
+    except Exception as e:
+        print(f"[Supabase] Failed to initialize: {e}", file=sys.stderr)
 
 # Initialize Mistral API with key from environment
 mistral_api_key = os.environ.get('MISTRAL_API_KEY')
@@ -230,6 +244,179 @@ def analyze_document_complete():
         traceback.print_exc()
 
         # Return error response
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+def run_async_analysis(queue_id: str, text: str, metadata: dict):
+    """
+    Background thread function to run Mistral analysis and write results to Supabase.
+    This allows the HTTP request to return immediately while processing continues.
+    """
+    try:
+        print(f"[ASYNC] Starting background analysis for queue_id: {queue_id}")
+        print(f"[ASYNC] File: {metadata.get('file_name', 'unknown')}, Text length: {len(text)} chars")
+
+        # Update status to show analysis started
+        if supabase_client:
+            supabase_client.table('processing_queue').update({
+                'current_step': 'AI analysis in progress...',
+                'progress': 30
+            }).eq('id', queue_id).execute()
+
+        # Run the full analysis
+        result = enhanced_document_processor.process_document_complete(
+            content=text,
+            metadata=metadata
+        )
+
+        print(f"[ASYNC] Analysis complete for {metadata.get('file_name', 'unknown')}")
+        print(f"[ASYNC] Title: {result.get('content_title', 'N/A')}")
+
+        # Convert content_authors to array if it's a string
+        content_authors = result.get('content_authors')
+        if content_authors and isinstance(content_authors, str):
+            content_authors = [content_authors]
+
+        # Write results to Supabase
+        if supabase_client:
+            update_data = {
+                'current_step': 'analysis_complete',
+                'progress': 90,
+                # Analysis fields
+                'content_title': result.get('content_title'),
+                'content_authors': content_authors,
+                'initial_analysis': result.get('initial_analysis'),
+                'detailed_analysis': result.get('detailed_analysis'),
+                'classification': result.get('classification'),
+                'catalogue_entry': result.get('catalogue_entry'),
+                'final_analysis': result.get('final_analysis'),
+                'is_hall_document': result.get('is_hall_document', 0),
+                # Vector and graph fields
+                'embedding_vector_pg': result.get('embedding_vector_pg'),
+                'embedding_metadata': result.get('embedding_metadata'),
+                'entities': result.get('entities'),
+                'relationships': result.get('relationships'),
+                'graph_metadata': result.get('graph_metadata')
+            }
+
+            supabase_client.table('processing_queue').update(update_data).eq('id', queue_id).execute()
+            print(f"[ASYNC] ✅ Results written to Supabase for queue_id: {queue_id}")
+        else:
+            print(f"[ASYNC] ⚠️ Supabase client not available - results not saved!")
+
+    except Exception as e:
+        print(f"[ASYNC ERROR] Analysis failed for queue_id {queue_id}: {str(e)}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+
+        # Update status to show failure
+        if supabase_client:
+            try:
+                supabase_client.table('processing_queue').update({
+                    'current_step': 'analysis_failed',
+                    'error_message': str(e)
+                }).eq('id', queue_id).execute()
+            except Exception as update_error:
+                print(f"[ASYNC ERROR] Failed to update error status: {update_error}", file=sys.stderr)
+
+
+@app.route('/analyze-async', methods=['POST'])
+def analyze_document_async():
+    """
+    Async document analysis - returns immediately and processes in background.
+    Results are written directly to Supabase when complete.
+
+    Request JSON:
+    {
+        "queue_id": "uuid-of-processing-queue-item",
+        "text": "Document content here...",
+        "metadata": {
+            "file_name": "document.pdf",
+            "file_type": "pdf",
+            "word_count": 5000
+        }
+    }
+
+    Response JSON (immediate):
+    {
+        "success": true,
+        "message": "Analysis started",
+        "queue_id": "uuid-of-processing-queue-item"
+    }
+
+    Results are written to processing_queue table when complete.
+    Poll the table for current_step = 'analysis_complete' or 'analysis_failed'
+    """
+    try:
+        # Check Supabase is configured
+        if not supabase_client:
+            return jsonify({
+                "success": False,
+                "error": "Supabase not configured - async analysis unavailable"
+            }), 503
+
+        # Get JSON data from request
+        data = request.get_json()
+
+        # Validate request
+        if not data:
+            return jsonify({
+                "success": False,
+                "error": "No JSON data provided"
+            }), 400
+
+        if 'queue_id' not in data:
+            return jsonify({
+                "success": False,
+                "error": "No queue_id provided"
+            }), 400
+
+        if 'text' not in data:
+            return jsonify({
+                "success": False,
+                "error": "No text provided in request body"
+            }), 400
+
+        queue_id = data['queue_id']
+        text = data['text']
+        metadata = data.get('metadata', {})
+
+        # Validate text is not empty
+        if not text or len(text.strip()) == 0:
+            return jsonify({
+                "success": False,
+                "error": "Text content is empty"
+            }), 400
+
+        # Log request info
+        print(f"[ANALYZE-ASYNC] Received request for queue_id: {queue_id}")
+        print(f"[ANALYZE-ASYNC] File: {metadata.get('file_name', 'unknown')}, Text length: {len(text)} chars")
+
+        # Start background thread for processing
+        thread = threading.Thread(
+            target=run_async_analysis,
+            args=(queue_id, text, metadata),
+            daemon=True
+        )
+        thread.start()
+
+        print(f"[ANALYZE-ASYNC] Background thread started for queue_id: {queue_id}")
+
+        # Return immediately
+        return jsonify({
+            "success": True,
+            "message": "Analysis started",
+            "queue_id": queue_id
+        }), 202  # 202 Accepted
+
+    except Exception as e:
+        print(f"[ERROR] Async analysis request failed: {str(e)}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+
         return jsonify({
             "success": False,
             "error": str(e)
