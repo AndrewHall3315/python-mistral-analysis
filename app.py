@@ -13,18 +13,50 @@ from enhanced_document_processor import EnhancedDocumentProcessor
 
 app = Flask(__name__)
 
-# Initialize Supabase client for async write-back
+# Supabase configuration for async write-back (using REST API directly)
 supabase_url = os.environ.get('SUPABASE_URL')
 supabase_service_key = os.environ.get('SUPABASE_SERVICE_ROLE_KEY')
-supabase_client = None
+supabase_configured = bool(supabase_url and supabase_service_key)
 
-if supabase_url and supabase_service_key:
+if supabase_configured:
+    print(f"[Supabase] Configured with URL: {supabase_url}")
+else:
+    print("[Supabase] Not configured - async analysis unavailable", file=sys.stderr)
+
+
+def supabase_update(table: str, data: dict, match_column: str, match_value: str) -> bool:
+    """
+    Update a row in Supabase using the REST API directly.
+    This avoids dependency conflicts with the supabase-py library.
+    """
+    import requests
+    import json
+
+    if not supabase_configured:
+        return False
+
     try:
-        from supabase import create_client
-        supabase_client = create_client(supabase_url, supabase_service_key)
-        print(f"[Supabase] Connected to {supabase_url}")
+        # Supabase REST API endpoint
+        url = f"{supabase_url}/rest/v1/{table}?{match_column}=eq.{match_value}"
+
+        headers = {
+            "apikey": supabase_service_key,
+            "Authorization": f"Bearer {supabase_service_key}",
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal"
+        }
+
+        response = requests.patch(url, headers=headers, json=data, timeout=30)
+
+        if response.status_code in [200, 204]:
+            return True
+        else:
+            print(f"[Supabase] Update failed: {response.status_code} - {response.text}", file=sys.stderr)
+            return False
+
     except Exception as e:
-        print(f"[Supabase] Failed to initialize: {e}", file=sys.stderr)
+        print(f"[Supabase] Request error: {e}", file=sys.stderr)
+        return False
 
 # Initialize Mistral API with key from environment
 mistral_api_key = os.environ.get('MISTRAL_API_KEY')
@@ -260,11 +292,10 @@ def run_async_analysis(queue_id: str, text: str, metadata: dict):
         print(f"[ASYNC] File: {metadata.get('file_name', 'unknown')}, Text length: {len(text)} chars")
 
         # Update status to show analysis started
-        if supabase_client:
-            supabase_client.table('processing_queue').update({
-                'current_step': 'AI analysis in progress...',
-                'progress': 30
-            }).eq('id', queue_id).execute()
+        supabase_update('processing_queue', {
+            'current_step': 'AI analysis in progress...',
+            'progress': 30
+        }, 'id', queue_id)
 
         # Run the full analysis
         result = enhanced_document_processor.process_document_complete(
@@ -281,31 +312,30 @@ def run_async_analysis(queue_id: str, text: str, metadata: dict):
             content_authors = [content_authors]
 
         # Write results to Supabase
-        if supabase_client:
-            update_data = {
-                'current_step': 'analysis_complete',
-                'progress': 90,
-                # Analysis fields
-                'content_title': result.get('content_title'),
-                'content_authors': content_authors,
-                'initial_analysis': result.get('initial_analysis'),
-                'detailed_analysis': result.get('detailed_analysis'),
-                'classification': result.get('classification'),
-                'catalogue_entry': result.get('catalogue_entry'),
-                'final_analysis': result.get('final_analysis'),
-                'is_hall_document': result.get('is_hall_document', 0),
-                # Vector and graph fields
-                'embedding_vector_pg': result.get('embedding_vector_pg'),
-                'embedding_metadata': result.get('embedding_metadata'),
-                'entities': result.get('entities'),
-                'relationships': result.get('relationships'),
-                'graph_metadata': result.get('graph_metadata')
-            }
+        update_data = {
+            'current_step': 'analysis_complete',
+            'progress': 90,
+            # Analysis fields
+            'content_title': result.get('content_title'),
+            'content_authors': content_authors,
+            'initial_analysis': result.get('initial_analysis'),
+            'detailed_analysis': result.get('detailed_analysis'),
+            'classification': result.get('classification'),
+            'catalogue_entry': result.get('catalogue_entry'),
+            'final_analysis': result.get('final_analysis'),
+            'is_hall_document': result.get('is_hall_document', 0),
+            # Vector and graph fields
+            'embedding_vector_pg': result.get('embedding_vector_pg'),
+            'embedding_metadata': result.get('embedding_metadata'),
+            'entities': result.get('entities'),
+            'relationships': result.get('relationships'),
+            'graph_metadata': result.get('graph_metadata')
+        }
 
-            supabase_client.table('processing_queue').update(update_data).eq('id', queue_id).execute()
+        if supabase_update('processing_queue', update_data, 'id', queue_id):
             print(f"[ASYNC] ✅ Results written to Supabase for queue_id: {queue_id}")
         else:
-            print(f"[ASYNC] ⚠️ Supabase client not available - results not saved!")
+            print(f"[ASYNC] ⚠️ Failed to write results to Supabase!")
 
     except Exception as e:
         print(f"[ASYNC ERROR] Analysis failed for queue_id {queue_id}: {str(e)}", file=sys.stderr)
@@ -313,14 +343,10 @@ def run_async_analysis(queue_id: str, text: str, metadata: dict):
         traceback.print_exc()
 
         # Update status to show failure
-        if supabase_client:
-            try:
-                supabase_client.table('processing_queue').update({
-                    'current_step': 'analysis_failed',
-                    'error_message': str(e)
-                }).eq('id', queue_id).execute()
-            except Exception as update_error:
-                print(f"[ASYNC ERROR] Failed to update error status: {update_error}", file=sys.stderr)
+        supabase_update('processing_queue', {
+            'current_step': 'analysis_failed',
+            'error_message': str(e)
+        }, 'id', queue_id)
 
 
 @app.route('/analyze-async', methods=['POST'])
@@ -352,10 +378,10 @@ def analyze_document_async():
     """
     try:
         # Check Supabase is configured
-        if not supabase_client:
+        if not supabase_configured:
             return jsonify({
                 "success": False,
-                "error": "Supabase not configured - async analysis unavailable"
+                "error": "Supabase not configured - async analysis unavailable. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY env vars."
             }), 503
 
         # Get JSON data from request
