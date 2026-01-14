@@ -18,10 +18,18 @@ supabase_url = os.environ.get('SUPABASE_URL')
 supabase_service_key = os.environ.get('SUPABASE_SERVICE_ROLE_KEY')
 supabase_configured = bool(supabase_url and supabase_service_key)
 
+# Webhook secret for Supabase webhook authentication
+webhook_secret = os.environ.get('SUPABASE_WEBHOOK_SECRET', '').strip()
+
 if supabase_configured:
     print(f"[Supabase] Configured with URL: {supabase_url}")
 else:
     print("[Supabase] Not configured - async analysis unavailable", file=sys.stderr)
+
+if webhook_secret:
+    print("[Webhook] Secret configured for Supabase webhooks")
+else:
+    print("[Webhook] SUPABASE_WEBHOOK_SECRET not set - webhook endpoints will reject requests", file=sys.stderr)
 
 
 def supabase_update(table: str, data: dict, match_column: str, match_value: str) -> bool:
@@ -491,6 +499,272 @@ def test_analysis():
             "success": False,
             "error": str(e)
         }), 500
+
+
+# ============================================================
+# WEBHOOK HELPER FUNCTIONS
+# ============================================================
+
+def verify_webhook_secret(request_obj):
+    """
+    Verify Supabase webhook authentication via X-Webhook-Secret header.
+    Returns (True, None) if valid, (False, error_response) if invalid.
+    """
+    if not webhook_secret:
+        print("[Webhook] SUPABASE_WEBHOOK_SECRET not configured", file=sys.stderr)
+        return False, (jsonify({"error": "Webhook secret not configured"}), 500)
+
+    provided_secret = request_obj.headers.get('X-Webhook-Secret', '')
+    if provided_secret != webhook_secret:
+        print("[Webhook] Invalid webhook secret provided", file=sys.stderr)
+        return False, (jsonify({"error": "Unauthorized"}), 401)
+
+    return True, None
+
+
+def check_idempotency(queue_id: str, expected_status: str) -> bool:
+    """
+    Check if document is still in expected status.
+    Returns False if already processed (skip this webhook).
+    """
+    import requests
+
+    if not supabase_configured:
+        return False
+
+    try:
+        url = f"{supabase_url}/rest/v1/processing_queue?id=eq.{queue_id}&select=status"
+        headers = {
+            'Authorization': f'Bearer {supabase_service_key}',
+            'apikey': supabase_service_key,
+            'Content-Type': 'application/json'
+        }
+
+        response = requests.get(url, headers=headers, timeout=10)
+
+        if response.status_code != 200:
+            print(f"[Idempotency] Failed to fetch status: {response.status_code}", file=sys.stderr)
+            return False
+
+        data = response.json()
+        if not data or len(data) == 0:
+            print(f"[Idempotency] Queue record {queue_id} not found", file=sys.stderr)
+            return False
+
+        current_status = data[0].get('status')
+        if current_status != expected_status:
+            print(f"[Idempotency] {queue_id} is '{current_status}', expected '{expected_status}'. Skipping.")
+            return False
+
+        return True
+
+    except Exception as e:
+        print(f"[Idempotency] Error checking status: {e}", file=sys.stderr)
+        return False
+
+
+def get_queue_record(queue_id: str) -> dict:
+    """
+    Fetch full queue record from Supabase.
+    """
+    import requests
+
+    if not supabase_configured:
+        return None
+
+    try:
+        url = f"{supabase_url}/rest/v1/processing_queue?id=eq.{queue_id}&select=*"
+        headers = {
+            'Authorization': f'Bearer {supabase_service_key}',
+            'apikey': supabase_service_key,
+            'Content-Type': 'application/json'
+        }
+
+        response = requests.get(url, headers=headers, timeout=10)
+
+        if response.status_code != 200:
+            return None
+
+        data = response.json()
+        if not data or len(data) == 0:
+            return None
+
+        return data[0]
+
+    except Exception as e:
+        print(f"[Queue] Error fetching record: {e}", file=sys.stderr)
+        return None
+
+
+# ============================================================
+# SUPABASE WEBHOOK ENDPOINT
+# ============================================================
+
+@app.route('/webhook/start-analysis', methods=['POST'])
+def webhook_start_analysis():
+    """
+    Supabase webhook endpoint for starting Mistral analysis.
+    Triggered on UPDATE to processing_queue when status changes to 'ocr_complete'.
+
+    Supabase webhook payload:
+    {
+        "type": "UPDATE",
+        "table": "processing_queue",
+        "schema": "public",
+        "record": { ... new record ... },
+        "old_record": { ... old record ... }
+    }
+    """
+    # Verify webhook secret
+    valid, error_response = verify_webhook_secret(request)
+    if not valid:
+        return error_response
+
+    try:
+        payload = request.get_json()
+        if not payload:
+            return jsonify({"error": "No payload provided"}), 400
+
+        record = payload.get('record', {})
+        old_record = payload.get('old_record', {})
+        queue_id = record.get('id')
+
+        if not queue_id:
+            return jsonify({"error": "No queue_id in payload"}), 400
+
+        print(f"[Webhook Analysis] Received for queue_id: {queue_id}")
+
+        # Only process if status CHANGED to 'ocr_complete'
+        new_status = record.get('status')
+        old_status = old_record.get('status') if old_record else None
+
+        if new_status != 'ocr_complete':
+            print(f"[Webhook Analysis] Status is '{new_status}', not 'ocr_complete'. Skipping.")
+            return jsonify({"status": "skipped", "reason": "status is not ocr_complete"}), 200
+
+        if old_status == 'ocr_complete':
+            print(f"[Webhook Analysis] Status unchanged (was already 'ocr_complete'). Skipping.")
+            return jsonify({"status": "skipped", "reason": "status unchanged"}), 200
+
+        # Idempotency check
+        if not check_idempotency(queue_id, 'ocr_complete'):
+            return jsonify({"status": "skipped", "reason": "already processing"}), 200
+
+        # Get content from record or fetch fresh
+        content = record.get('content')
+        if not content:
+            fresh_record = get_queue_record(queue_id)
+            if fresh_record:
+                content = fresh_record.get('content')
+                record = fresh_record  # Use full record
+
+        # Check for empty/minimal content
+        if not content or len(content.strip()) < 50:
+            print(f"[Webhook Analysis] Empty or minimal content ({len(content) if content else 0} chars). Skipping analysis.")
+            # Set to ready without analysis
+            from datetime import datetime
+            supabase_update('processing_queue', {
+                'status': 'ready',
+                'current_step': 'Completed (no content to analyze)',
+                'progress': 100,
+                'completed_at': datetime.utcnow().isoformat()
+            }, 'id', queue_id)
+            return jsonify({"status": "completed", "reason": "empty content, skipped analysis"}), 200
+
+        # Build metadata
+        metadata = {
+            'file_name': record.get('file_name', 'document'),
+            'file_type': record.get('file_type', 'pdf'),
+            'word_count': len(content.split())
+        }
+
+        # Start background processing
+        thread = threading.Thread(
+            target=run_webhook_analysis,
+            args=(queue_id, content, metadata),
+            daemon=True
+        )
+        thread.start()
+
+        return jsonify({"status": "accepted", "queue_id": queue_id}), 202
+
+    except Exception as e:
+        print(f"[Webhook Analysis] Error: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+def run_webhook_analysis(queue_id: str, text: str, metadata: dict):
+    """
+    Background thread function for webhook-triggered Mistral analysis.
+    Runs analysis and sets status to analysis_complete when done.
+    """
+    from datetime import datetime
+
+    try:
+        print(f"[Webhook Analysis] Starting for queue_id: {queue_id}")
+        print(f"[Webhook Analysis] File: {metadata.get('file_name', 'unknown')}, Text length: {len(text)} chars")
+
+        # Update status to 'analysis_in_progress'
+        supabase_update('processing_queue', {
+            'status': 'analysis_in_progress',
+            'current_step': 'AI analysis in progress...',
+            'progress': 75
+        }, 'id', queue_id)
+
+        # Run the full analysis
+        result = enhanced_document_processor.process_document_complete(
+            content=text,
+            metadata=metadata
+        )
+
+        print(f"[Webhook Analysis] Analysis complete for {metadata.get('file_name', 'unknown')}")
+        print(f"[Webhook Analysis] Title: {result.get('content_title', 'N/A')}")
+
+        # Convert content_authors to array if it's a string
+        content_authors = result.get('content_authors')
+        if content_authors and isinstance(content_authors, str):
+            content_authors = [content_authors]
+
+        # Write results to Supabase with status 'analysis_complete'
+        update_data = {
+            'status': 'analysis_complete',
+            'current_step': 'Analysis complete, extracting fields...',
+            'progress': 90,
+            # Analysis fields
+            'content_title': result.get('content_title'),
+            'content_authors': content_authors,
+            'initial_analysis': result.get('initial_analysis'),
+            'detailed_analysis': result.get('detailed_analysis'),
+            'classification': result.get('classification'),
+            'catalogue_entry': result.get('catalogue_entry'),
+            'final_analysis': result.get('final_analysis'),
+            'is_hall_document': result.get('is_hall_document', 0),
+            # Vector and graph fields
+            'embedding_vector_pg': result.get('embedding_vector_pg'),
+            'embedding_metadata': result.get('embedding_metadata'),
+            'entities': result.get('entities'),
+            'relationships': result.get('relationships'),
+            'graph_metadata': result.get('graph_metadata')
+        }
+
+        if supabase_update('processing_queue', update_data, 'id', queue_id):
+            print(f"[Webhook Analysis] ✅ Results written to Supabase for queue_id: {queue_id}")
+        else:
+            print(f"[Webhook Analysis] ⚠️ Failed to write results to Supabase!", file=sys.stderr)
+
+    except Exception as e:
+        print(f"[Webhook Analysis] Failed for queue_id {queue_id}: {str(e)}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+
+        # Update status to failed
+        supabase_update('processing_queue', {
+            'status': 'failed',
+            'error_message': str(e),
+            'current_step': f'Analysis failed: {str(e)}'
+        }, 'id', queue_id)
 
 
 if __name__ == '__main__':
